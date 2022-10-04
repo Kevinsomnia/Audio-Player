@@ -25,37 +25,40 @@ public class AudioPlayer : MonoBehaviour
         if (_audioSource == null)
             _audioSource = GetComponent<AudioSource>();
 
-        int sampleRate = (int)_sampleRate;
-        _clip = AudioClip.Create(
-            "StreamClip",
-            lengthSamples: sampleRate * CLIP_LENGTH_SECONDS,
-            channels: 2,
-            frequency: sampleRate,
-            stream: true,
-            pcmreadercallback: OnAudioRead
-        );
-        _audioSource.clip = _clip;
-        _audioSource.loop = true;
+        // int sampleRate = (int)_sampleRate;
+        // _clip = AudioClip.Create(
+        //     "StreamClip",
+        //     lengthSamples: sampleRate * CLIP_LENGTH_SECONDS,
+        //     channels: 2,
+        //     frequency: sampleRate,
+        //     stream: true,
+        //     pcmreadercallback: OnAudioRead
+        // );
+        // _audioSource.clip = _clip;
+        // _audioSource.loop = true;
 
         if (!string.IsNullOrEmpty(_initialURL))
         {
-            // PlayURL(_initialURL);
+            PlayURL(_initialURL, AudioType.MPEG);
         }
 
     }
 
     public void PlayURL(string url, AudioType audioType)
     {
-        StartCoroutine(Start(url, audioType));
+        object[] p = new object[2] { url, audioType };
+        StartCoroutine(StreamAudio(p));
     }
 
-    private void OnAudioRead(float[] data)
-    {
+    // private void OnAudioRead(float[] data)
+    // {
 
-    }
+    // }
 
-    private IEnumerator Start(string url, AudioType audioType)
+    private IEnumerator StreamAudio(object[] p)
     {
+        string url = (string)p[0];
+        AudioType audioType = (AudioType)p[1];
         using (var webRequest = UnityWebRequestMultimedia.GetAudioClip(url, audioType))
         {
             ((DownloadHandlerAudioClip)webRequest.downloadHandler).streamAudio = true;
