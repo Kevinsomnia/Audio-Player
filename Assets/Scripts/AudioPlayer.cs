@@ -75,7 +75,8 @@ public class AudioPlayer : MonoBehaviour
                     res.GetResponseStream().CopyTo(currStream);
                     byte[] curr = currStream.ToArray();
                     float[] tmp = ConvertByteToFloat(curr, bitsPerSample);
-                    Array.Copy(tmp, 0, f, floatCounter, tmp.Length + floatCounter > f.Length ? f.Length - floatCounter : tmp.Length);
+                    int len = tmp.Length + floatCounter > f.Length ? tmp.Length + floatCounter - f.Length : tmp.Length;
+                    Array.Copy(tmp, 0, f, floatCounter, len);
                     floatCounter += tmp.Length;
                     currNumBytes += chunkSize;
                     Debug.Log(currNumBytes);
