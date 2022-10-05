@@ -1,4 +1,8 @@
+using System;
 using System.Collections;
+using System.IO;
+using System.Net;
+using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -25,58 +29,98 @@ public class AudioPlayer : MonoBehaviour
         if (_audioSource == null)
             _audioSource = GetComponent<AudioSource>();
 
-        // int sampleRate = (int)_sampleRate;
-        // _clip = AudioClip.Create(
-        //     "StreamClip",
-        //     lengthSamples: sampleRate * CLIP_LENGTH_SECONDS,
-        //     channels: 2,
-        //     frequency: sampleRate,
-        //     stream: true,
-        //     pcmreadercallback: OnAudioRead
-        // );
-        // _audioSource.clip = _clip;
-        // _audioSource.loop = true;
-
         if (!string.IsNullOrEmpty(_initialURL))
         {
-            PlayURL(_initialURL, AudioType.MPEG);
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(_initialURL);
+            req.AddRange(0, 44);
+            req.KeepAlive = true;
+            HttpWebResponse res = (HttpWebResponse)req.GetResponse();
+            if (res.StatusCode != HttpStatusCode.PartialContent) return;
+            Debug.Log("len = " + res.ContentLength);
+            Debug.Log(res.ContentType);
+            MemoryStream ms = new MemoryStream();
+            res.GetResponseStream().CopyTo(ms);
+            byte[] buffer = ms.ToArray();
+            short numChannels = BitConverter.ToInt16(buffer, 22);
+            int sampleRate = BitConverter.ToInt32(buffer, 24);
+            int byteRate = BitConverter.ToInt32(buffer, 28);
+            short bitsPerSample = BitConverter.ToInt16(buffer, 34);
+            int subchunk2Size = BitConverter.ToInt32(buffer, 40);
+
+            Debug.Log("numChannels = " + numChannels);
+            Debug.Log("sampleRate = " + sampleRate);
+            Debug.Log("subchunk2Size = " + subchunk2Size);
+            Debug.Log("bitsPerSample = " + bitsPerSample);
+            StartCoroutine(PlayURL(_initialURL, subchunk2Size, byteRate, numChannels, sampleRate, bitsPerSample));
         }
 
     }
 
-    public void PlayURL(string url, AudioType audioType)
+    public IEnumerator PlayURL(string url, int totalBytes, int bytesPerSecond, int numChannels, int sampleRate, short bitsPerSample)
     {
-        object[] p = new object[2] { url, audioType };
-        StartCoroutine(StreamAudio(p));
-    }
-
-    // private void OnAudioRead(float[] data)
-    // {
-
-    // }
-
-    private IEnumerator StreamAudio(object[] p)
-    {
-        string url = (string)p[0];
-        AudioType audioType = (AudioType)p[1];
-        using (var webRequest = UnityWebRequestMultimedia.GetAudioClip(url, audioType))
+        int currNumBytes = 44;
+        int chunk = bytesPerSecond * 5;
+        int initialChunk = bytesPerSecond * 20;
+        bool initial = true;
+        float[] f = new float[(int)(totalBytes / Math.Ceiling(bitsPerSample / 8.0))];
+        int floatCounter = 0;
+        do
         {
-            ((DownloadHandlerAudioClip)webRequest.downloadHandler).streamAudio = true;
-
-            webRequest.SendWebRequest();
-            while (webRequest.result != UnityWebRequest.Result.ConnectionError && webRequest.downloadedBytes < 1024)
-                // Ensure that we have at least 1 byte to stream
-                yield return null;
-
-            if (webRequest.result == UnityWebRequest.Result.ConnectionError)
+            int chunkSize = initial ? initialChunk : chunk;
+            HttpWebResponse res = GetStreamOfBytes(currNumBytes, currNumBytes + chunkSize);
+            if (res.StatusCode == HttpStatusCode.PartialContent)
             {
-                Debug.LogError(webRequest.error);
-                yield break;
+                using (var currStream = new MemoryStream())
+                {
+                    res.GetResponseStream().CopyTo(currStream);
+                    byte[] curr = currStream.ToArray();
+                    float[] tmp = ConvertByteToFloat(curr, bitsPerSample);
+                    Array.Copy(tmp, 0, f, floatCounter, tmp.Length + floatCounter > f.Length ? f.Length - floatCounter : tmp.Length);
+                    floatCounter += tmp.Length;
+                    currNumBytes += chunkSize;
+                    Debug.Log(currNumBytes);
+                }
             }
+            initial = false;
+            yield return new WaitForSecondsRealtime(5);
+        } while (currNumBytes < totalBytes);
+        AudioClip clip = AudioClip.Create("ClipName", f.Length, numChannels, sampleRate, false);
+        clip.SetData(f, 0);
+        Debug.Log("PLAYING");
+        _audioSource.clip = clip;
+        _audioSource.Play();
+    }
 
-            var clip = ((DownloadHandlerAudioClip)webRequest.downloadHandler).audioClip;
-            _audioSource.clip = clip;
-            _audioSource.Play();
+    private HttpWebResponse GetStreamOfBytes(int rangeStart, int rangeEnd)
+    {
+        HttpWebRequest req = (HttpWebRequest)WebRequest.Create(_initialURL);
+        req.AddRange(rangeStart, rangeEnd);
+        req.KeepAlive = true;
+        return (HttpWebResponse)req.GetResponse();
+    }
+
+    private float[] ConvertByteToFloat(byte[] array, short bitsPerSample)
+    {
+        float[] floatArr;
+        if (bitsPerSample == 16)
+        {
+            short[] sdata = new short[(int)Math.Ceiling(array.Length / 2.0)];
+            Buffer.BlockCopy(array, 0, sdata, 0, array.Length);
+            floatArr = new float[sdata.Length];
+            for (int i = 0; i < floatArr.Length; i++)
+            {
+                floatArr[i] = ((float)sdata[i] / short.MaxValue);
+            }
         }
+        else
+        {
+            char[] cdata = System.Text.Encoding.UTF8.GetString(array).ToCharArray();
+            floatArr = new float[cdata.Length];
+            for (int i = 0; i < floatArr.Length; i++)
+            {
+                floatArr[i] = ((float)cdata[i] / char.MaxValue);
+            }
+        }
+        return floatArr;
     }
 }
