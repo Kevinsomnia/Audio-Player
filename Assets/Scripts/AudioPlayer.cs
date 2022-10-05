@@ -31,6 +31,7 @@ public class AudioPlayer : MonoBehaviour
 
         if (!string.IsNullOrEmpty(_initialURL))
         {
+            // Parsing WAV Header for audio stuff
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(_initialURL);
             req.AddRange(0, 44);
             req.KeepAlive = true;
@@ -75,6 +76,7 @@ public class AudioPlayer : MonoBehaviour
                     res.GetResponseStream().CopyTo(currStream);
                     byte[] curr = currStream.ToArray();
                     float[] tmp = ConvertByteToFloat(curr, bitsPerSample);
+                    // Push tmp to audio player
                     int len = tmp.Length + floatCounter > f.Length ? tmp.Length + floatCounter - f.Length : tmp.Length;
                     Array.Copy(tmp, 0, f, floatCounter, len);
                     floatCounter += tmp.Length;
@@ -85,6 +87,7 @@ public class AudioPlayer : MonoBehaviour
             initial = false;
             yield return new WaitForSecondsRealtime(5);
         } while (currNumBytes < totalBytes);
+        // This isn't needed this is just for testing
         AudioClip clip = AudioClip.Create("ClipName", f.Length, numChannels, sampleRate, false);
         clip.SetData(f, 0);
         Debug.Log("PLAYING");
