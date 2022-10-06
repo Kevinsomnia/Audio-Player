@@ -1,44 +1,30 @@
 using System;
-using System.Collections;
 using System.IO;
 using System.Net;
-using System.Text;
 using UnityEngine;
-using UnityEngine.Networking;
 
 public class AudioPlayer : MonoBehaviour
 {
-    public enum SampleRate
-    {
-        Hz_32000 = 32000,
-        Hz_44100 = 44100,
-        Hz_48000 = 48000,
-    }
 
-    private const int REBUFFER_TIME = 5;
+    private const float RESYNC_TIME = 2f;
+    private const int AUDIO_CLIP_TIME = 30;
+    private const int CHUNK_SIZE = 5;
 
     [SerializeField] private AudioSource _audioSource;
     [SerializeField] private string _initialURL;
-    [SerializeField] private SampleRate _sampleRate = SampleRate.Hz_48000;
-
-
     [SerializeField] private float testTime = 0f;
 
     private int loopCount = 0;
-    public int sampleFrontIdx = 0;
-    public int sampleBackIdx = 0;
-
-    private int syncStartIdx = 0;
-
+    public int loadedIdx = 0;
+    public int playedIdx = 0;
+    private int syncLoadedIdx = 0;
     private int prevTimeSampleIdx = 0;
     private int initialChunk = 0;
     private int currNumBytes = 0;
     int totalBytes;
     int bytesPerSecond;
     short numChannels; int sampleRate; short bitsPerSample;
-
     private bool initial = true;
-
 
     private AudioClip _clip;
 
@@ -72,9 +58,10 @@ public class AudioPlayer : MonoBehaviour
             Debug.Log("sampleRate = " + sampleRate);
             Debug.Log("subchunk2Size = " + totalBytes);
             Debug.Log("bitsPerSample = " + bitsPerSample);
-            _bufferLen = sampleRate * 30;
+            Debug.Log("bytesPerSecond = " + bytesPerSecond);
+            _bufferLen = sampleRate * AUDIO_CLIP_TIME; // Audio Clip is 30 seconds long
             currNumBytes = 44;
-            _clip = AudioClip.Create("", _bufferLen, numChannels, sampleRate, false);
+            _clip = AudioClip.Create("AUDIO PLAYER", _bufferLen, numChannels, sampleRate, false);
             _audioSource.loop = true;
             _audioSource.clip = _clip;
             // StartCoroutine("PlayURL");
@@ -85,16 +72,14 @@ public class AudioPlayer : MonoBehaviour
     public void Update()
     {
         testTime += Time.deltaTime;
-        if (Mathf.Abs((float)(sampleBackIdx / sampleRate) - testTime) > 10f)
+        if (Mathf.Abs((float)(playedIdx / sampleRate) - testTime) > RESYNC_TIME)
         {
             // sync
-            int syncIdx = (int)(testTime * sampleRate);
-            sampleFrontIdx = syncIdx;
-            // loopCount = syncIdx / _bufferLen;
+            syncLoadedIdx = (int)(testTime * sampleRate);
+            loadedIdx = syncLoadedIdx;
             _audioSource.timeSamples = 0;
             _audioSource.Pause();
-            currNumBytes = (int)(syncIdx * bytesPerSecond) / sampleRate;
-            syncStartIdx = syncIdx;
+            currNumBytes = syncLoadedIdx * (bytesPerSecond / sampleRate);
             prevTimeSampleIdx = 0;
         }
 
@@ -104,10 +89,10 @@ public class AudioPlayer : MonoBehaviour
         }
         prevTimeSampleIdx = _audioSource.timeSamples;
 
-        sampleBackIdx = _bufferLen * loopCount + _audioSource.timeSamples + syncStartIdx;
-        if (sampleFrontIdx - sampleBackIdx < sampleRate * 20)
+        playedIdx = _bufferLen * loopCount + _audioSource.timeSamples + syncLoadedIdx;
+        if (loadedIdx - playedIdx < sampleRate * 20)
         {
-            int chunkSize = initial ? bytesPerSecond * 20 : bytesPerSecond * 5;
+            int chunkSize = bytesPerSecond * CHUNK_SIZE * (initial ? 4 : 1);
             HttpWebResponse res = GetStreamOfBytes(currNumBytes, currNumBytes + chunkSize);
             if (res.StatusCode == HttpStatusCode.PartialContent)
             {
@@ -116,13 +101,11 @@ public class AudioPlayer : MonoBehaviour
                     res.GetResponseStream().CopyTo(currStream);
                     byte[] curr = currStream.ToArray();
                     float[] tmp = ConvertByteToFloat(curr, bitsPerSample);
-                    // Push tmp to audio player
-                    _idx = (sampleFrontIdx - syncStartIdx) % _bufferLen;
+                    _idx = (loadedIdx - syncLoadedIdx) % _bufferLen;
                     _clip.SetData(tmp, _idx);
-                    sampleFrontIdx = (sampleFrontIdx + (int)(tmp.Length / numChannels));
+                    loadedIdx += (int)(tmp.Length / numChannels);
                     currNumBytes += chunkSize;
-                    Debug.Log("idx " + _idx);
-                    Debug.Log(currNumBytes);
+                    // Debug.Log(currNumBytes);
                     if (!_audioSource.isPlaying) _audioSource.UnPause();
                 }
             }
@@ -133,39 +116,6 @@ public class AudioPlayer : MonoBehaviour
             initial = false;
         }
 
-    }
-
-    public IEnumerator PlayURL()
-    {
-        int chunk = bytesPerSecond * 5;
-        int initialChunk = bytesPerSecond * 6;
-        do
-        {
-            int chunkSize = initial ? initialChunk : chunk;
-            HttpWebResponse res = GetStreamOfBytes(currNumBytes, currNumBytes + chunkSize);
-            if (res.StatusCode == HttpStatusCode.PartialContent)
-            {
-                using (var currStream = new MemoryStream())
-                {
-                    res.GetResponseStream().CopyTo(currStream);
-                    byte[] curr = currStream.ToArray();
-                    float[] tmp = ConvertByteToFloat(curr, bitsPerSample);
-                    float last = tmp[tmp.Length - 1];
-                    Debug.Log("idx " + _idx);
-                    // Push tmp to audio player
-                    _clip.SetData(tmp, _idx);
-                    _idx = (_idx + (int)(tmp.Length / numChannels)) % _bufferLen;
-                    currNumBytes += chunkSize;
-                    Debug.Log(currNumBytes);
-                }
-            }
-            if (initial)
-            {
-                _audioSource.Play();
-            }
-            initial = false;
-            yield return new WaitForSecondsRealtime(5);
-        } while (currNumBytes < totalBytes);
     }
 
     private HttpWebResponse GetStreamOfBytes(int rangeStart, int rangeEnd)
@@ -179,7 +129,7 @@ public class AudioPlayer : MonoBehaviour
     private float[] ConvertByteToFloat(byte[] array, short bitsPerSample)
     {
         float[] floatArr;
-        if (bitsPerSample == 16)
+        if (bitsPerSample == (short)16)
         {
             short[] sdata = new short[(int)Math.Ceiling(array.Length / 2.0)];
             Buffer.BlockCopy(array, 0, sdata, 0, array.Length);
