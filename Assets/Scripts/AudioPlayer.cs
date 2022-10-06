@@ -14,7 +14,7 @@ public class AudioPlayer : MonoBehaviour
     [SerializeField] private string _initialURL;
     [SerializeField] private float testTime = 0f;
 
-    private int loopCount = 0;
+    public int loopCount = 0;
     public int loadedIdx = 0;
     public int playedIdx = 0;
     private int syncLoadedIdx = 0;
@@ -24,6 +24,8 @@ public class AudioPlayer : MonoBehaviour
     int totalBytes;
     int bytesPerSecond;
     short numChannels; int sampleRate; short bitsPerSample;
+
+    private float[] samples;
     private bool initial = true;
 
     private AudioClip _clip;
@@ -64,6 +66,7 @@ public class AudioPlayer : MonoBehaviour
             _clip = AudioClip.Create("AUDIO PLAYER", _bufferLen, numChannels, sampleRate, false);
             _audioSource.loop = true;
             _audioSource.clip = _clip;
+            samples = new float[_bufferLen * numChannels];
             // StartCoroutine("PlayURL");
         }
 
@@ -77,6 +80,7 @@ public class AudioPlayer : MonoBehaviour
             // sync
             syncLoadedIdx = (int)(testTime * sampleRate);
             loadedIdx = syncLoadedIdx;
+            loopCount = 0;
             _audioSource.timeSamples = 0;
             _audioSource.Pause();
             currNumBytes = syncLoadedIdx * (bytesPerSecond / sampleRate);
@@ -102,7 +106,19 @@ public class AudioPlayer : MonoBehaviour
                     byte[] curr = currStream.ToArray();
                     float[] tmp = ConvertByteToFloat(curr, bitsPerSample);
                     _idx = (loadedIdx - syncLoadedIdx) % _bufferLen;
-                    _clip.SetData(tmp, _idx);
+                    // _clip.SetData(tmp, _idx);
+                    int endIdx = _idx * numChannels + tmp.Length;
+                    int outOfBounds = endIdx - samples.Length;
+                    if (endIdx >= samples.Length)
+                    {
+                        Array.Copy(tmp, 0, samples, _idx * numChannels, tmp.Length - outOfBounds);
+                        Array.Copy(tmp, tmp.Length-outOfBounds, samples, 0, outOfBounds);
+                    }
+                    else
+                    {
+                        Array.Copy(tmp, 0, samples, _idx * numChannels, tmp.Length);
+                    }
+                    _clip.SetData(samples, 0);
                     loadedIdx += (int)(tmp.Length / numChannels);
                     currNumBytes += chunkSize;
                     // Debug.Log(currNumBytes);
