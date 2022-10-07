@@ -1,7 +1,8 @@
 using System;
-using System.IO;
 using System.Net;
+using NVorbis;
 using UnityEngine;
+using NLayer;
 
 public class AudioPlayer : MonoBehaviour
 {
@@ -33,6 +34,9 @@ public class AudioPlayer : MonoBehaviour
     private int _idx;
     private int _bufferLen;
 
+    private VorbisReader vorbis;
+    private MpegFile mpeg;
+
     private void Awake()
     {
         if (_audioSource == null)
@@ -40,40 +44,62 @@ public class AudioPlayer : MonoBehaviour
 
         if (!string.IsNullOrEmpty(_initialURL))
         {
-            // Parsing WAV Header for audio stuff
-            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(_initialURL);
-            req.AddRange(0, 44);
-            req.KeepAlive = true;
-            HttpWebResponse res = (HttpWebResponse)req.GetResponse();
-            Debug.Log("len = " + res.ContentLength);
-            Debug.Log(res.ContentType);
-            MemoryStream ms = new MemoryStream();
-            res.GetResponseStream().CopyTo(ms);
-            byte[] buffer = ms.ToArray();
-            numChannels = BitConverter.ToInt16(buffer, 22);
-            sampleRate = BitConverter.ToInt32(buffer, 24);
-            bytesPerSecond = BitConverter.ToInt32(buffer, 28);
-            bitsPerSample = BitConverter.ToInt16(buffer, 34);
-            totalBytes = BitConverter.ToInt32(buffer, 40);
+            PartialHTTPStream stream = new PartialHTTPStream(_initialURL);
+            // HttpWebResponse res = GetStreamOfBytes(0,0);
+            // vorbis = new VorbisReader(stream);
+            mpeg = new MpegFile(stream);
+            // naudio = WaveFormatConversionStream.CreatePcmStream(reader);
+            sampleRate = mpeg.SampleRate;
 
-            Debug.Log("numChannels = " + numChannels);
-            Debug.Log("sampleRate = " + sampleRate);
-            Debug.Log("subchunk2Size = " + totalBytes);
-            Debug.Log("bitsPerSample = " + bitsPerSample);
-            Debug.Log("bytesPerSecond = " + bytesPerSecond);
-            _bufferLen = sampleRate * AUDIO_CLIP_TIME; // Audio Clip is 30 seconds long
-            currNumBytes = 44;
-            _clip = AudioClip.Create("AUDIO PLAYER", _bufferLen, numChannels, sampleRate, false);
-            _audioSource.loop = true;
-            _audioSource.clip = _clip;
+            _bufferLen = sampleRate * AUDIO_CLIP_TIME;
+            numChannels = (short)mpeg.Channels;
             samples = new float[_bufferLen * numChannels];
-            // StartCoroutine("PlayURL");
+            // Debug.Log("total " + (int)(vorbis.TotalSamples));
+            _audioSource.loop = true;
+            _audioSource.clip = AudioClip.Create("AUDIO PLAYER", _bufferLen, numChannels, sampleRate, false);
+            // float[] f = new float[sampleRate * 10];
+            // mpeg.ReadSamples(f, 0, sampleRate * 10);
+            // _audioSource.clip.SetData(f, 0);
+            // _audioSource.Play();
         }
+
+        // if (!string.IsNullOrEmpty(_initialURL))
+        // {
+        //     // Parsing WAV Header for audio stuff
+        //     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(_initialURL);
+        //     req.AddRange(0, 44);
+        //     req.KeepAlive = true;
+        //     HttpWebResponse res = (HttpWebResponse)req.GetResponse();
+        //     Debug.Log("len = " + res.ContentLength);
+        //     Debug.Log(res.ContentType);
+        //     MemoryStream ms = new MemoryStream();
+        //     res.GetResponseStream().CopyTo(ms);
+        //     byte[] buffer = ms.ToArray();
+        //     numChannels = BitConverter.ToInt16(buffer, 22);
+        //     sampleRate = BitConverter.ToInt32(buffer, 24);
+        //     bytesPerSecond = BitConverter.ToInt32(buffer, 28);
+        //     bitsPerSample = BitConverter.ToInt16(buffer, 34);
+        //     totalBytes = BitConverter.ToInt32(buffer, 40);
+
+        //     Debug.Log("numChannels = " + numChannels);
+        //     Debug.Log("sampleRate = " + sampleRate);
+        //     Debug.Log("subchunk2Size = " + totalBytes);
+        //     Debug.Log("bitsPerSample = " + bitsPerSample);
+        //     Debug.Log("bytesPerSecond = " + bytesPerSecond);
+        //     _bufferLen = sampleRate * AUDIO_CLIP_TIME; // Audio Clip is 30 seconds long
+        //     currNumBytes = 44;
+        //     _clip = AudioClip.Create("AUDIO PLAYER", _bufferLen, numChannels, sampleRate, false);
+        //     _audioSource.loop = true;
+        //     _audioSource.clip = _clip;
+        //     samples = new float[_bufferLen * numChannels];
+        //     // StartCoroutine("PlayURL");
+        // }
 
     }
 
     public void Update()
     {
+        // if (Time.frameCount > 2) Debug.Break();s
         testTime += Time.deltaTime;
         if (Mathf.Abs((float)(playedIdx / sampleRate) - testTime) > RESYNC_TIME)
         {
@@ -84,6 +110,9 @@ public class AudioPlayer : MonoBehaviour
             _audioSource.timeSamples = 0;
             _audioSource.Pause();
             currNumBytes = syncLoadedIdx * (bytesPerSecond / sampleRate);
+            // vorbis.SamplePosition = loadedIdx;
+            mpeg.Position = loadedIdx;
+            // naudio.
             prevTimeSampleIdx = 0;
         }
 
@@ -96,35 +125,27 @@ public class AudioPlayer : MonoBehaviour
         playedIdx = _bufferLen * loopCount + _audioSource.timeSamples + syncLoadedIdx;
         if (loadedIdx - playedIdx < sampleRate * 20)
         {
-            int chunkSize = bytesPerSecond * CHUNK_SIZE * (initial ? 4 : 1);
-            HttpWebResponse res = GetStreamOfBytes(currNumBytes, currNumBytes + chunkSize);
-            if (res.StatusCode == HttpStatusCode.PartialContent)
+            float[] tmp = new float[(int)(0.01f * sampleRate) * numChannels];
+            // vorbis.ReadSamples(tmp, 0, (int)(0.01f * sampleRate) * numChannels);
+            mpeg.ReadSamples(tmp, 0, (int)(0.01f * sampleRate) * numChannels);
+            // naudio.Read(tmp, 0, (int)(0.01f * sampleRate) * numChannels);
+            _idx = (loadedIdx - syncLoadedIdx) % _bufferLen;
+            int endIdx = _idx * numChannels + tmp.Length;
+            int outOfBounds = endIdx - samples.Length;
+            if (endIdx >= samples.Length)
             {
-                using (var currStream = new MemoryStream())
-                {
-                    res.GetResponseStream().CopyTo(currStream);
-                    byte[] curr = currStream.ToArray();
-                    float[] tmp = ConvertByteToFloat(curr, bitsPerSample);
-                    _idx = (loadedIdx - syncLoadedIdx) % _bufferLen;
-                    // _clip.SetData(tmp, _idx);
-                    int endIdx = _idx * numChannels + tmp.Length;
-                    int outOfBounds = endIdx - samples.Length;
-                    if (endIdx >= samples.Length)
-                    {
-                        Array.Copy(tmp, 0, samples, _idx * numChannels, tmp.Length - outOfBounds);
-                        Array.Copy(tmp, tmp.Length-outOfBounds, samples, 0, outOfBounds);
-                    }
-                    else
-                    {
-                        Array.Copy(tmp, 0, samples, _idx * numChannels, tmp.Length);
-                    }
-                    _clip.SetData(samples, 0);
-                    loadedIdx += (int)(tmp.Length / numChannels);
-                    currNumBytes += chunkSize;
-                    // Debug.Log(currNumBytes);
-                    if (!_audioSource.isPlaying) _audioSource.UnPause();
-                }
+                Array.Copy(tmp, 0, samples, _idx * numChannels, tmp.Length - outOfBounds);
+                Array.Copy(tmp, tmp.Length - outOfBounds, samples, 0, outOfBounds);
             }
+            else
+            {
+                Array.Copy(tmp, 0, samples, _idx * numChannels, tmp.Length);
+            }
+            _audioSource.clip.SetData(samples, 0);
+            // Debug.Break();
+            loadedIdx += (int)(tmp.Length / numChannels);
+            // loadedIdx += (int)
+            if (!_audioSource.isPlaying) _audioSource.UnPause();
         }
         if (initial)
         {
@@ -133,6 +154,70 @@ public class AudioPlayer : MonoBehaviour
         }
 
     }
+
+    // public void Update2()
+    // {
+    //     testTime += Time.deltaTime;
+    //     if (Mathf.Abs((float)(playedIdx / sampleRate) - testTime) > RESYNC_TIME)
+    //     {
+    //         // sync
+    //         syncLoadedIdx = (int)(testTime * sampleRate);
+    //         loadedIdx = syncLoadedIdx;
+    //         loopCount = 0;
+    //         _audioSource.timeSamples = 0;
+    //         _audioSource.Pause();
+    //         currNumBytes = syncLoadedIdx * (bytesPerSecond / sampleRate);
+    //         prevTimeSampleIdx = 0;
+    //     }
+
+    //     if (_audioSource.timeSamples < prevTimeSampleIdx)
+    //     {
+    //         loopCount++;
+    //     }
+    //     prevTimeSampleIdx = _audioSource.timeSamples;
+
+    //     playedIdx = _bufferLen * loopCount + _audioSource.timeSamples + syncLoadedIdx;
+    //     if (loadedIdx - playedIdx < sampleRate * 20)
+    //     {
+    //         int chunkSize = bytesPerSecond * CHUNK_SIZE * (initial ? 4 : 1);
+    //         HttpWebResponse res = GetStreamOfBytes(currNumBytes, currNumBytes + chunkSize);
+    //         if (res.StatusCode == HttpStatusCode.PartialContent)
+    //         {
+    //             using (var currStream = new MemoryStream())
+    //             {
+    //                 res.GetResponseStream().CopyTo(currStream);
+    //                 // byte[] curr = currStream.ToArray();
+    //                 var vorbis = new NVorbis.VorbisReader(currStream);
+    //                 float[] tmp;
+    //                 // vorbis.ReadSamples(tmp, )
+    //                 _idx = (loadedIdx - syncLoadedIdx) % _bufferLen;
+    //                 _clip.SetData(tmp, _idx);
+    //                 int endIdx = _idx * numChannels + tmp.Length;
+    //                 int outOfBounds = endIdx - samples.Length;
+    //                 if (endIdx >= samples.Length)
+    //                 {
+    //                     Array.Copy(tmp, 0, samples, _idx * numChannels, tmp.Length - outOfBounds);
+    //                     Array.Copy(tmp, tmp.Length - outOfBounds, samples, 0, outOfBounds);
+    //                 }
+    //                 else
+    //                 {
+    //                     Array.Copy(tmp, 0, samples, _idx * numChannels, tmp.Length);
+    //                 }
+    //                 _clip.SetData(samples, 0);
+    //                 loadedIdx += (int)(tmp.Length / numChannels);
+    //                 currNumBytes += chunkSize;
+    //                 // Debug.Log(currNumBytes);
+    //                 if (!_audioSource.isPlaying) _audioSource.UnPause();
+    //             }
+    //         }
+    //     }
+    //     if (initial)
+    //     {
+    //         _audioSource.Play();
+    //         initial = false;
+    //     }
+
+    // }
 
     private HttpWebResponse GetStreamOfBytes(int rangeStart, int rangeEnd)
     {

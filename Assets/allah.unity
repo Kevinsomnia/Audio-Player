@@ -332,11 +332,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _audioSource: {fileID: 1983504032}
-  _initialURL: https://spatial-public-assets.s3.amazonaws.com/hack22_gltf_extensions/bensound-blessing2.wav
-  _sampleRate: 48000
+  _initialURL: https://file-examples.com/storage/feb2e515cc6339d7ba1ffcd/2017/11/file_example_MP3_700KB.mp3
   testTime: 0
-  sampleFrontIdx: 0
-  sampleBackIdx: 0
+  loopCount: 0
+  loadedIdx: 0
+  playedIdx: 0
 --- !u!82 &1983504032
 AudioSource:
   m_ObjectHideFlags: 0
